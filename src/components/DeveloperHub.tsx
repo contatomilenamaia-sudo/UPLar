@@ -21,7 +21,9 @@ import {
   XCircle, 
   Phone, 
   ArrowUpRight, 
-  HelpCircle 
+  HelpCircle,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { NODE_JS_SCRAPER_CODE_TEMPLATE } from "../services/scraper";
 
@@ -119,12 +121,75 @@ export default function DeveloperHub() {
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Supabase live configuration states
+  const [supabaseFormUrl, setSupabaseFormUrl] = useState("");
+  const [supabaseFormKey, setSupabaseFormKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [configStatus, setConfigStatus] = useState<"idle" | "loading" | "success" | "error" | "warning">("idle");
+  const [configMessage, setConfigMessage] = useState("");
+  const [currentStatus, setCurrentStatus] = useState<{ status: string; url: string; hasKey: boolean; message: string }>({
+    status: "Loading",
+    url: "",
+    hasKey: false,
+    message: "Verificando status de sincronização..."
+  });
+
   // n8n connection testing
   const [n8nUrl, setN8nUrl] = useState(() => {
     return localStorage.getItem("uplar_n8n_url") || "";
   });
   const [webhookStatus, setWebhookStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [webhookResponse, setWebhookResponse] = useState<string>("");
+
+  const fetchSupabaseStatus = async () => {
+    try {
+      const resp = await fetch("/api/config-supabase");
+      if (resp.ok) {
+        const data = await resp.json();
+        setCurrentStatus({
+          status: data.status,
+          url: data.supabaseUrl || "",
+          hasKey: data.hasKey,
+          message: data.message || ""
+        });
+        if (data.supabaseUrl) {
+          setSupabaseFormUrl(data.supabaseUrl);
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao carregar status do Supabase:", err);
+    }
+  };
+
+  const handleSaveSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabaseFormUrl || !supabaseFormKey) {
+      alert("Por favor, preencha a URL do Supabase e a Service Role Key!");
+      return;
+    }
+    setConfigStatus("loading");
+    setConfigMessage("");
+    try {
+      const response = await fetch("/api/config-supabase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ supabaseUrl: supabaseFormUrl, supabaseKey: supabaseFormKey })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setConfigStatus(data.status === "Warning" ? "warning" : "success");
+        setConfigMessage(data.message);
+        fetchSupabaseStatus();
+        fetchLeads();
+      } else {
+        setConfigStatus("error");
+        setConfigMessage(data.error || "Algo deu errado na validação da conexão.");
+      }
+    } catch (err: any) {
+      setConfigStatus("error");
+      setConfigMessage(err.message || "Não foi possível enviar as configurações para o servidor.");
+    }
+  };
 
   const fetchLeads = async () => {
     setLoadingLeads(true);
@@ -143,6 +208,7 @@ export default function DeveloperHub() {
 
   useEffect(() => {
     fetchLeads();
+    fetchSupabaseStatus();
   }, []);
 
   const handleCopy = (text: string, id: string) => {
@@ -329,6 +395,174 @@ export default function DeveloperHub() {
 
       {/* Tab Panels */}
       <div className="p-6 bg-white/20">
+        
+        {/* SUPABASE CONNECTION PANEL */}
+        {false && (
+          <div className="space-y-6 animate-fade-in text-[#2C2C2C]">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Form Column */}
+              <div className="lg:col-span-7 space-y-4">
+                <form onSubmit={handleSaveSupabase} className="bg-white/40 p-6 rounded-2xl border border-white/80 space-y-4">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-mono font-bold uppercase tracking-wider text-[#2C2C2C] flex items-center gap-1">
+                      ⛓️ Vincular Novo Banco Supabase
+                    </h4>
+                    <p className="text-[11px] text-[#5B6347]">
+                      Insira as credenciais do seu projeto Supabase abaixo. Elas serão salvas no arquivo <strong className="font-mono text-xs">.env</strong> do servidor de forma 100% segura para salvar leads, respostas e agendamentos.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    {/* URL Input */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-mono text-[#5B6347] uppercase font-bold tracking-wider">
+                        Supabase Project URL
+                      </label>
+                      <input
+                        type="url"
+                        required
+                        placeholder="Ex: https://abcdefghijklmopqrstuv.supabase.co"
+                        value={supabaseFormUrl}
+                        onChange={(e) => setSupabaseFormUrl(e.target.value)}
+                        className="w-full bg-white border border-[#2C2C2C]/10 rounded-xl px-4 py-2.5 text-xs focus:ring-1 focus:ring-[#5B6347] focus:border-[#5B6347] outline-none"
+                      />
+                    </div>
+
+                    {/* Key Input containing eye-off secure toggle */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-mono text-[#5B6347] uppercase font-bold tracking-wider">
+                        Supabase Service Role Key (Chave Secreta)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showKey ? "text" : "password"}
+                          required
+                          placeholder="Cole sua service_role secret key aqui..."
+                          value={supabaseFormKey}
+                          onChange={(e) => setSupabaseFormKey(e.target.value)}
+                          className="w-full bg-white border border-[#2C2C2C]/10 rounded-xl pl-4 pr-10 py-2.5 text-xs focus:ring-1 focus:ring-[#5B6347] focus:border-[#5B6347] outline-none font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowKey(!showKey)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 cursor-pointer"
+                        >
+                          {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      <span className="block text-[10px] text-neutral-400 leading-relaxed">
+                        ⚠️ <strong>Importante:</strong> Use a chave <code className="bg-neutral-100 px-1 py-0.5 rounded font-mono text-neutral-600">service_role</code> para permitir que o servidor da aplicação grave e consulte as tabelas corretamente ignorando políticas de RLS vazias.
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={configStatus === "loading"}
+                    className="flex items-center justify-center gap-2 w-full bg-[#5B6347] hover:bg-[#464D36] text-white px-5 py-3 text-xs font-semibold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-xs disabled:opacity-50 font-mono"
+                  >
+                    {configStatus === "loading" ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Testando & Salvando Conexão...
+                      </>
+                    ) : (
+                      <>
+                        <Database className="w-3.5 h-3.5" /> Salvar & Testar Conexão Supabase
+                      </>
+                    )}
+                  </button>
+
+                  {configMessage && (
+                    <div className={`p-4 rounded-xl text-xs font-sans whitespace-pre-wrap text-left border flex items-start gap-2.5 ${
+                      configStatus === "success" 
+                        ? "bg-emerald-50 text-emerald-900 border-emerald-200" 
+                        : configStatus === "warning"
+                          ? "bg-amber-50 text-amber-900 border-amber-200"
+                          : "bg-red-50 text-red-900 border-red-200"
+                    }`}>
+                      {configStatus === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />}
+                      {configStatus === "warning" && <HelpCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />}
+                      {configStatus === "error" && <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />}
+                      <span className="leading-relaxed">{configMessage}</span>
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              {/* Status and Info Column */}
+              <div className="lg:col-span-5 space-y-4">
+                
+                {/* Status Indicator Card */}
+                <div className={`p-6 rounded-2xl border text-left space-y-3.5 ${
+                  currentStatus.status === "Connected"
+                    ? "bg-emerald-50/50 border-emerald-500/20"
+                    : currentStatus.status === "Warning"
+                      ? "bg-amber-50/50 border-amber-500/20"
+                      : "bg-red-50/50 border-red-500/20"
+                }`}>
+                  <span className="text-[10px] font-mono tracking-widest text-[#5B6347] uppercase font-semibold">
+                    📡 Status de Sincronização
+                  </span>
+                  
+                  <div className="flex items-center gap-3">
+                    <span className={`relative flex h-3 w-3`}>
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                        currentStatus.status === "Connected" 
+                          ? "bg-emerald-400" 
+                          : currentStatus.status === "Warning" 
+                            ? "bg-amber-400" 
+                            : "bg-red-400"
+                      }`} />
+                      <span className={`relative inline-flex rounded-full h-3 w-3 ${
+                        currentStatus.status === "Connected" 
+                          ? "bg-emerald-500" 
+                          : currentStatus.status === "Warning" 
+                            ? "bg-amber-500" 
+                            : "bg-red-500"
+                      }`} />
+                    </span>
+                    <h5 className="text-sm font-bold capitalize font-serif text-neutral-800">
+                      {currentStatus.status === "Connected" 
+                        ? "Conectado" 
+                        : currentStatus.status === "Warning" 
+                          ? "Configurado / Sem tabelas" 
+                          : "Supabase Desconectado"}
+                    </h5>
+                  </div>
+
+                  <p className="text-[11px] text-neutral-600 font-sans leading-relaxed">
+                    {currentStatus.message}
+                  </p>
+
+                  {currentStatus.url && (
+                    <div className="pt-2 border-t border-neutral-200/50 space-y-1">
+                      <p className="text-[9px] font-mono uppercase tracking-wider text-neutral-400 font-bold">Projeto Atual:</p>
+                      <p className="text-xs font-mono text-neutral-700 truncate">{currentStatus.url}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Where to get parameters card */}
+                <div className="bg-white/40 p-5 rounded-2xl border border-white space-y-3 text-left">
+                  <h5 className="text-xs font-bold font-serif text-neutral-800 flex items-center gap-1.5">
+                    <ExternalLink className="w-3.5 h-3.5 text-[#C68B77]" /> Onde encontrar no Supabase?
+                  </h5>
+                  
+                  <ul className="text-[11px] text-[#5B6347] space-y-2 list-decimal list-inside leading-relaxed font-sans">
+                    <li>Acesse o painel do seu projeto no <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="underline font-bold text-[#5B6347] hover:text-[#C68B77]">Supabase</a>.</li>
+                    <li>No menu lateral, clique em <strong>Project Settings</strong> (engrenagem).</li>
+                    <li>Clique na aba <strong>API</strong>.</li>
+                    <li>Copie o campo <strong>Project URL</strong> para o primeiro campo ao lado.</li>
+                    <li>Em <strong className="text-red-700">Project API keys</strong>, copie o valor do campo <code className="bg-neutral-100 font-mono text-red-700 px-1 py-0.5 rounded text-[10px]">service_role</code> (chave secreta) para o segundo campo.</li>
+                  </ul>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        )}
         
         {/* LEADS LIST PANEL */}
         {activeTab === "leads" && (

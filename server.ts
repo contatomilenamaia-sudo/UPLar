@@ -5,6 +5,7 @@
 
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -19,23 +20,34 @@ app.use(express.json());
 
 const PORT = 3000;
 
-// Initialize Supabase Client Safely
-const getSupabaseClient = () => {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key || url === "MY_SUPABASE_URL" || key === "MY_SUPABASE_KEY" || url === "" || key === "") {
-    console.warn("Aviso: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados. Usando banco de dados simulado em memória.");
+// Initialize Supabase Client Safely and dynamically
+let activeSupabaseUrl = process.env.SUPABASE_URL || "";
+let activeSupabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+let supabaseClient: any = null;
+
+const initSupabaseClient = (url?: string, key?: string) => {
+  const finalUrl = url !== undefined ? url : activeSupabaseUrl;
+  const finalKey = key !== undefined ? key : activeSupabaseKey;
+
+  if (!finalUrl || !finalKey || finalUrl === "MY_SUPABASE_URL" || finalKey === "MY_SUPABASE_KEY" || finalUrl === "" || finalKey === "") {
+    supabaseClient = null;
     return null;
   }
   try {
-    return createClient(url, key);
+    supabaseClient = createClient(finalUrl, finalKey);
+    activeSupabaseUrl = finalUrl;
+    activeSupabaseKey = finalKey;
+    process.env.SUPABASE_URL = finalUrl;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = finalKey;
+    return supabaseClient;
   } catch (error) {
     console.error("Falha ao inicializar o cliente Supabase:", error);
+    supabaseClient = null;
     return null;
   }
 };
 
-const supabaseClient = getSupabaseClient();
+initSupabaseClient();
 
 // Initialize Gemini Client safely using system skill patterns
 const getGeminiClient = () => {
@@ -132,6 +144,118 @@ const STYLE_DIAGNOSES: Record<string, any> = {
 // ==========================================
 // API ROUTES
 // ==========================================
+
+// Helper to test if connection to Supabase database actually works
+const testConnection = async (client: any) => {
+  if (!client) return { ok: false, error: "Nenhum cliente Supabase configurado" };
+  try {
+    const { data, error } = await client.from("usuarios").select("count").limit(1);
+    if (error) {
+      if (error.code === "P0001" || error.message?.includes("relation") || error.message?.includes("does not exist")) {
+        return { 
+          ok: true, 
+          warn: "Conectado ao Supabase, mas a tabela 'usuarios' não foi encontrada. Vá até a aba 'Supabase SQL' e execute o script DDL no Editor de SQL do seu painel Supabase." 
+        };
+      }
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || String(err) };
+  }
+};
+
+// GET current Supabase connection status
+app.get("/api/config-supabase", async (req, res) => {
+  const isConfigured = !!(activeSupabaseUrl && activeSupabaseKey);
+  let status = "Not Configured";
+  let message = "Supabase não está configurado. Por favor, insira as chaves abaixo.";
+  
+  if (isConfigured) {
+    const check = await testConnection(supabaseClient);
+    if (check.ok) {
+      status = check.warn ? "Warning" : "Connected";
+      message = check.warn || "Conexão ativa e funcionando perfeitamente!";
+    } else {
+      status = "Error";
+      message = `Falha na conexão: ${check.error}`;
+    }
+  }
+
+  res.json({
+    supabaseUrl: activeSupabaseUrl,
+    hasKey: !!activeSupabaseKey,
+    status,
+    message
+  });
+});
+
+// POST update and save Supabase credentials
+app.post("/api/config-supabase", async (req, res) => {
+  const { supabaseUrl, supabaseKey } = req.body;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    return res.status(400).json({ error: "URL e Chave são obrigatórios." });
+  }
+
+  try {
+    const tempClient = createClient(supabaseUrl, supabaseKey);
+    const check = await testConnection(tempClient);
+    
+    if (!check.ok && !check.warn) {
+      return res.status(400).json({ error: `Falha ao conectar com estas credenciais: ${check.error}` });
+    }
+
+    // Update in-memory state
+    initSupabaseClient(supabaseUrl, supabaseKey);
+
+    // Save to .env file for persistence
+    try {
+      let envContent = "";
+      if (fs.existsSync(".env")) {
+        envContent = fs.readFileSync(".env", "utf-8");
+      } else if (fs.existsSync(".env.example")) {
+        envContent = fs.readFileSync(".env.example", "utf-8");
+      }
+      
+      const lines = envContent.split("\n");
+      let hasUrl = false;
+      let hasKey = false;
+      
+      const newLines = lines.map(line => {
+        if (line.startsWith("SUPABASE_URL=")) {
+          hasUrl = true;
+          return `SUPABASE_URL="${supabaseUrl}"`;
+        }
+        if (line.startsWith("SUPABASE_SERVICE_ROLE_KEY=")) {
+          hasKey = true;
+          return `SUPABASE_SERVICE_ROLE_KEY="${supabaseKey}"`;
+        }
+        return line;
+      });
+
+      if (!hasUrl) {
+        newLines.push(`SUPABASE_URL="${supabaseUrl}"`);
+      }
+      if (!hasKey) {
+        newLines.push(`SUPABASE_SERVICE_ROLE_KEY="${supabaseKey}"`);
+      }
+
+      fs.writeFileSync(".env", newLines.join("\n"), "utf-8");
+    } catch (e: any) {
+      console.error("Erro ao escrever no arquivo .env:", e);
+    }
+
+    res.json({
+      success: true,
+      status: check.warn ? "Warning" : "Connected",
+      message: check.warn || "Conexão configurada e validada com sucesso!"
+    });
+
+  } catch (err: any) {
+    res.status(500).json({ error: `Erro na validação de conexão: ${err.message || err}` });
+  }
+});
 
 // Style Test endpoint (Forms)
 app.post("/api/forms", async (req, res) => {
