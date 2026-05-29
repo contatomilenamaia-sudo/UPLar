@@ -1,0 +1,6 @@
+{
+  "name": "UPLar",
+  "description": "Plataforma inteligente orquestradora de design de interiores: teste de estilo, agente de IA para consultoria, raspagem de produtos para reforma e gerenciamento de projetos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
